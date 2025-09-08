@@ -30,8 +30,6 @@ def write_upcoming_earnings_symbols(client):
     api_key = os.getenv("API_KEY")
     finnhub_client = finnhub.Client(api_key=api_key)
 
-    makret_cap_dict = {}
-
 
     # Get today's date
     today = datetime.datetime.today()   
@@ -56,6 +54,7 @@ def write_upcoming_earnings_symbols(client):
     for entry in calendar:
         tickers.append(entry["symbol"])
     volatility_map = pd.Series(0.0, index=tickers)
+    implied_move_map = pd.Series(0.0, index=tickers)
     for entry in calendar:
         try:
             symbol = entry["symbol"]
@@ -63,17 +62,25 @@ def write_upcoming_earnings_symbols(client):
             response = client.option_chains(symbol=symbol, strikeCount=1, fromDate=today, toDate=next_friday).json()
             if response["numberOfContracts"] == 0: continue
 
+            straddle_price = 0.0
+
             for exp_map_key in ("callExpDateMap", "putExpDateMap"):
                 exp_map = response.get(exp_map_key, {})
                 for expiry_bucket in exp_map.values():
                     for strike_level in expiry_bucket.values():
                         for contract in strike_level:
                             volatility_map[symbol] = contract["volatility"]
+                            straddle_price += contract["mark"]
 
+            response = client.quote(symbol_id=symbol).json()
+            asset_price = response[symbol]['quote']['mark']
+
+            implied_move_map[symbol] = straddle_price / asset_price * 100
             # Output
         except Exception as e:
             print(e)
 
     volatility_map = volatility_map[volatility_map != 0.0]
     sorted_map = volatility_map.sort_values(ascending=False)
-    print(sorted_map)
+    for key, value in sorted_map.items():
+        print(f'{key}: {value}% IV; {implied_move_map[key]}% IM')  # (key, value)
